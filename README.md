@@ -9,6 +9,8 @@
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-IsolationForest-F7931E?logo=scikitlearn&logoColor=white)
 
+![GuardStream SOC dashboard](docs/dashboard.jpg)
+
 ---
 
 ## Quick start
@@ -77,7 +79,7 @@ flowchart LR
 1. The simulator `XADD`s an authorization request to the Redis Stream.
 2. The engine reads it through a **consumer group** (`XREADGROUP`, at-least-once; un-acked messages are replayed on restart and persisted idempotently with `MERGE`).
 3. **One pipelined Redis round-trip** reads the card's previous location, evicts stale entries from its velocity sorted set, counts the 60 s / 10 min windows, then records the new transaction.
-4. Rules and the ML model run in-process, then the scorer combines them. Latency is measured from step 3 onward and typically comes in well under the 50 ms budget (~5 ms in benchmarks).
+4. Rules and the ML model run in-process, then the scorer combines them. Latency is measured from step 3 onward and typically comes in well under the 50 ms budget (see *Live run* below).
 5. The batch is committed to PostgreSQL, acked on the stream, and broadcast over WebSocket.
 
 ---
@@ -114,6 +116,20 @@ Every decision records exact `triggered_reasons`, for example:
 ```json
 ["Impossible Travel (IL -> UK in 4m, 3,563 km)", "ML Anomaly Score: 0.97 (3,563 km from home)"]
 ```
+
+### Live run (Docker Desktop on Windows, 4 tx/s, 10 % fraud rate)
+
+Measured from the running stack's `/api/stats` endpoint after about 3,000 transactions:
+
+| Metric | Value |
+| --- | --- |
+| Engine latency | avg ≈ 14 ms, p95 ≈ 28 ms (occasional single spikes above 50 ms) |
+| Detection rate (simulated fraud flagged) | ≈ 98 % |
+| False-positive rate (normal traffic flagged) | ≈ 1.1–1.3 % |
+
+A single click on **Trigger fraud burst** produced 10 auto-blocks and 16 new review cases within 10 seconds.
+
+![Analyst case view](docs/review-case.jpg)
 
 ### Offline engine evaluation
 
