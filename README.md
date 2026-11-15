@@ -2,7 +2,8 @@
 
 **Real-time financial fraud & anomaly detection.** A streaming pipeline that scores every card transaction in a few milliseconds with a hybrid engine (deterministic rules over Redis sliding windows + an Isolation Forest model), persists the verdict to PostgreSQL, and pushes it live to a SOC analyst dashboard.
 
-![stack](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+[![CI](https://github.com/yakov-ashgar27/guardstream/actions/workflows/ci.yml/badge.svg)](https://github.com/yakov-ashgar27/guardstream/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-Streams-DC382D?logo=redis&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
@@ -10,6 +11,14 @@
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-IsolationForest-F7931E?logo=scikitlearn&logoColor=white)
 
 ![GuardStream SOC dashboard](docs/dashboard.jpg)
+
+## Highlights
+
+- **Streaming ingestion with recovery:** Redis Streams consumer group with at-least-once delivery, replay of un-acked messages on restart, and idempotent writes.
+- **Hybrid detection:** explainable business rules over Redis sliding windows, combined with an unsupervised Isolation Forest. Every decision carries human-readable reasons.
+- **Fixing a known ML weakness:** Isolation Forests cannot flag values outside their training range, so an out-of-envelope guard covers that gap ([details](#2-isolation-forest-engineml_modelpy)).
+- **Analyst workflow:** a review queue with full context, verdicts persisted in an audit table, and live KPIs including detection and false-positive rates measured against ground truth.
+- **One-command setup:** `docker compose up --build` starts PostgreSQL, Redis, the API and the dashboard, with health checks and automatic schema creation.
 
 ---
 
@@ -40,38 +49,31 @@ docker compose exec backend pytest -q
 ## Architecture
 
 ```mermaid
-flowchart LR
-    subgraph SIM["Transaction Simulator (asyncio task)"]
-        N["Normal traffic ~90%<br/>1,000 cardholders"]
-        F["Fraud scenarios ~10%<br/>Geo-jump · Card testing · High value"]
+flowchart TB
+    SIM["Transaction Simulator<br/>normal traffic + fraud scenarios"]
+    STREAM[("Redis Stream<br/>transactions:incoming")]
+    WIN[("Redis sliding windows<br/>velocity · last location · profiles")]
+    subgraph ENGINE["Hybrid Fraud Engine"]
+        direction LR
+        RULES["Rules<br/>velocity · geo-jump · high amount"]
+        ML["Isolation Forest<br/>+ envelope guard"]
+        SCORE["Scorer<br/>0-100 → APPROVE / REVIEW / BLOCK"]
+        RULES --> SCORE
+        ML --> SCORE
     end
-
-    subgraph REDIS["Redis"]
-        XS[("Stream<br/>gs:transactions:incoming")]
-        ZS[("Sorted sets<br/>gs:vel:{card} — velocity windows")]
-        HS[("Hashes<br/>gs:last:{card} — last location<br/>gs:profiles — baselines")]
-    end
-
-    subgraph ENGINE["Fraud Engine (consumer group)"]
-        R["rules.py<br/>VELOCITY · GEO_JUMP · HIGH_AMOUNT"]
-        M["ml_model.py<br/>Isolation Forest + envelope guard"]
-        S["scorer.py<br/>rules + 0.6 × ML → 0-100"]
-    end
-
-    PG[("PostgreSQL 16<br/>transactions · alert_audits")]
+    PG[("PostgreSQL<br/>transactions · alert_audits")]
     API["FastAPI<br/>REST + WebSocket"]
-    UI["React SOC Dashboard<br/>KPIs · Live feed · Charts · Review queue"]
+    UI["React SOC Dashboard"]
 
-    N & F -->|XADD| XS
-    XS -->|XREADGROUP| ENGINE
-    ENGINE <-->|pipelined window ops| ZS & HS
-    R & M --> S
-    S -->|batch insert| PG
-    S -->|broadcast| API
-    API <-->|/ws/transactions| UI
-    UI -->|PATCH /api/transactions/:id/review| API
+    SIM -->|XADD| STREAM
+    STREAM -->|XREADGROUP| ENGINE
+    ENGINE <-->|1 pipelined round-trip| WIN
+    ENGINE -->|persist| PG
+    ENGINE -->|broadcast| API
+    API <-->|live feed| UI
+    UI -->|analyst verdict| API
     API -->|update + audit| PG
-    UI -->|PATCH /api/simulator · POST burst| SIM
+    UI -.->|speed · fraud rate · burst| SIM
 ```
 
 ### Request path for one transaction
@@ -236,3 +238,7 @@ All thresholds and simulator defaults can be overridden with environment variabl
 - Analyst feedback loop that retrains a supervised model on confirmed fraud/legit labels
 - SHAP explanations per transaction
 - Prometheus metrics and Grafana dashboards
+
+## License
+
+[MIT](LICENSE)
