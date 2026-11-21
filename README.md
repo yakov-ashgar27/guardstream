@@ -12,6 +12,8 @@
 
 ![GuardStream SOC dashboard](docs/dashboard.jpg)
 
+📐 **System design:** [DFD (levels 0–1) and ERD](docs/DIAGRAMS.md), drawn from the code.
+
 ## Highlights
 
 - **Streaming ingestion with recovery:** Redis Streams consumer group with at-least-once delivery, replay of un-acked messages on restart, and idempotent writes.
